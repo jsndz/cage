@@ -178,7 +178,38 @@ Thread
 So a thread is not literally a process in user-space terminology, but in the Linux kernel it is extremely close to "a process that shares almost everything with another process."
 
 
-Why is PID 1 special?
-1. It adopts orphaned processes
+Here in the code i need to run clone which will create a isolate namespace.
 
-2. It reaps zombies
+but in go i cant do direct syscall.clone
+The problem is that Go has a runtime with:
+
+goroutines
+scheduler
+GC
+thread-local state
+
+After a raw clone(), the child only contains the calling thread's state, not a fully initialized Go runtime state. If the child continues running normal Go code, you can get crashes, deadlocks, or runtime corruption.
+
+Unshare can't be used because it will isolate the current running process.
+
+So,
+```go 
+cmd := exec.Command("ls")
+
+cmd.SysProcAttr = &syscall.SysProcAttr{
+    Cloneflags: syscall.CLONE_NEWNS |
+                syscall.CLONE_NEWUTS,
+}
+```
+
+the Go runtime performs the low-level clone safely and immediately execs the target program.
+
+Internally it's roughly:
+
+Go parent
+    ↓
+runtime clone()
+    ↓
+child
+    ↓
+execve("ls")
