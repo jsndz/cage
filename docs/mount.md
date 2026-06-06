@@ -80,3 +80,207 @@ mount --bind /sandbox-root /
 /proc       procfs
 /tmp        tmpfs
 ```
+
+
+Lets take the prev example of USB 
+
+when you connect usb -> mount /dev/sdb1 /mnt
+the /mnt is a mount point which is nothing but the directory
+
+kernel will be like 
+
+Filesystem on /dev/sdb1
+        ↓
+show it at
+        ↓
+/mnt
+
+
+Suppose the USB contains:
+
+USB Filesystem
+
+photos/
+movie.mp4
+notes.txt
+
+Before mounting:
+
+/
+├── home
+├── tmp
+└── mnt
+
+After:
+
+/
+├── home
+├── tmp
+└── mnt
+    ├── photos
+    ├── movie.mp4
+    └── notes.txt
+
+
+What Really Happened?
+
+The kernel stores something conceptually like:
+
+Mount Table
+
+Source      Target
+
+/dev/sda1   /
+/dev/sdb1   /mnt
+procfs      /proc
+
+When a process accesses:
+
+/mnt/file1
+
+the kernel checks:
+
+Which filesystem is mounted at /mnt?
+
+Answer:
+
+/ dev / sdb1
+
+Then reads from that filesystem.
+
+Its not copying , The kernel is simply changing where path resolution goes.
+Like redirecting to the files
+
+This is put in mount table
+And when you do unmount the entry in table is removes
+
+mount --bind uses same mechanism 
+
+src -> destination
+
+Everytime kernel consults mount information during path resolution.
+
+mount table is stored inside kernel.
+
+
+To understand Mount lets run some commands:
+
+
+make a playground :
+
+
+```sh
+mkdir -p ~/mount-lab
+cd ~/mount-lab
+
+mkdir src dst
+echo "hello from src" > src/test.txt
+
+```
+Tree:
+```md 
+pop-os:~/mount-lab$ tree
+.
+├── dst
+└── src
+    └── test.txt
+
+
+```
+
+Lets bind mount 
+
+
+sudo mount --bind src dst
+
+this connects dst to src
+
+Now:
+
+ls dst
+cat dst/test.txt
+
+Output:
+
+test.txt
+hello from src
+
+but the dst did not have any test.txt
+
+it did not copy or move.
+
+mount table will have dst -> src mapping 
+
+so when we do bind it creates something like a mapping so when you go to the some dir during path resolution 
+you will be redirected to the  specific memory
+
+
+jaison@pop-os:~/mount-lab$ cat /proc/self/mounts | grep mount-lab
+jaison@pop-os:~/mount-lab$ sudo mount --bind src dst
+jaison@pop-os:~/mount-lab$ cat /proc/self/mounts | grep mount-lab
+/dev/nvme0n1p7 /home/jaison/mount-lab/dst ext4 rw,noatime,errors=remount-ro 0 0
+jaison@pop-os:~/mount-lab$ sudo umount dst
+jaison@pop-os:~/mount-lab$ cat /proc/self/mounts | grep mount-lab
+jaison@pop-os:~/mount-lab$ 
+
+
+here as you can see mount table was created when you add something to mount
+
+
+A mount tells VFS:
+
+When you reach this directory,
+switch to another filesystem root.
+
+Example:
+
+/
+├── home
+├── proc
+└── tmp
+
+Mount table:
+
+/proc -> procfs
+/tmp  -> tmpfs
+
+When path resolution reaches /proc, VFS switches into the proc filesystem.
+
+
+lets say 
+
+open("/home/jaison/file.txt");
+
+Start at root
+/
+Lookup "home"
+dentry("home")
+      ↓
+inode
+Lookup "jaison"
+dentry("jaison")
+      ↓
+inode
+Lookup "file.txt"
+dentry("file.txt")
+      ↓
+inode
+
+Now VFS has the inode of the file.
+
+Then the filesystem driver reads the actual data.
+
+lets say
+
+/
+├── home
+└── proc
+
+
+lookup proc 
+
+and notices the mount there 
+now rather than calling the syscall for ext4 
+the vfs calls syscall for procfs root
+
+

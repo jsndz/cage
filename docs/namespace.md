@@ -104,3 +104,56 @@ What happened?
 This is the essence of namespaces:
 
 > The kernel gives the process a different view of a resource. The real system hasn't changed; only what the process can see has changed.
+
+
+
+Each namespace creates a different kernel structure
+There is an initial namespace for every namespace type, often called the root or initial namespace.\
+When Linux boots:
+
+Kernel
+
+creates:
+
+Initial PID Namespace -> this has some DS
+Initial Mount Namespace -> same here with mount table 
+Initial Network Namespace
+Initial UTS Namespace
+
+so when you create a new namespace you are essentially creating a new data structure for that specific ns
+
+A process is associated with a namespace through pointers stored in its task_struct.
+
+Very roughly:
+
+Process
+   |
+task_struct
+   |
+nsproxy
+   |
+   ├── mnt_ns
+   ├── pid_ns
+   ├── net_ns
+   └── uts_ns
+
+child inherits the namespace from parent
+
+Run:
+
+ls -l /proc/self/ns
+
+You see:
+
+mnt:[4026532902]
+pid:[4026532901]
+
+Those are basically handles to the namespace objects.
+
+The kernel is exposing:
+
+Current Process
+       |
+       +--> Namespace Object
+
+through procfs.

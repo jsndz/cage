@@ -1,56 +1,92 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func main() {
-	cmd := exec.Command("sh", "-c", "echo $$; sleep 5")
+	args := os.Args
+	cmd := exec.Command(args[1], args[2:]...)
 
-	hostPIDNS, _ := os.Readlink("/proc/self/ns/pid")
-	hostMNTNS, _ := os.Readlink("/proc/self/ns/mnt")
-	hostUTSNS, _ := os.Readlink("/proc/self/ns/uts")
 	flags :=
 		syscall.CLONE_NEWPID | // PID namespace
 			syscall.CLONE_NEWNS | // Mount namespace
 			syscall.CLONE_NEWUTS // Hostname (UTS) namespace
+
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: uintptr(flags),
 	}
 
-	// check for isolation
+}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
+func InitContainer() {
+
+	rootfs := "/tmp/rootfs"
+	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		panic(err)
 	}
+	// change the dir to mount point
+	// pivot_root takes mount point and mount point is entry in a mount table
+	// binding to itself to make it a mount point
+	if err := unix.Mount(rootfs, rootfs, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		panic(err)
+	}
+	// use pivot for switching root
+	putOld := filepath.Join(rootfs, ".oldroot")
+	if err := os.MkdirAll(putOld, 0755); err != nil {
+		panic(err)
+	}
+	if err := unix.PivotRoot(rootfs, putOld); err != nil {
+		panic(err)
+	}
+	// since you are creating a file sys you need
+	// proc, sys, dev and bin for binary and lib
 
-	if err := cmd.Start(); err != nil {
+	CreateFilesystem() // for now or can use base image
+
+	// container is centered around a process
+	// process has a root pointer to  /
+	// so it like a pointer having swtiched around the / and /rootfs
+	// switched place but oldroot is pointing to /
+	// unmount that
+	if err := unix.Unmount(putOld, unix.MNT_DETACH); err != nil {
 		panic(err)
 	}
 
-	childPID := cmd.Process.Pid
+}
 
-	pidNS, _ := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", childPID))
-	mntNS, _ := os.Readlink(fmt.Sprintf("/proc/%d/ns/mnt", childPID))
-	utsNS, _ := os.Readlink(fmt.Sprintf("/proc/%d/ns/uts", childPID))
-
-	fmt.Println("Child PID NS:", pidNS)
-	fmt.Println("Child MNT NS:", mntNS)
-	fmt.Println("Child UTS NS:", utsNS)
-
-	data, _ := io.ReadAll(stdout)
-
-	cmd.Wait()
-
-	fmt.Println("Host PID NS:", hostPIDNS)
-	fmt.Println("Host MNT NS:", hostMNTNS)
-	fmt.Println("Host UTS NS:", hostUTSNS)
-
-	fmt.Print(string(data))
+func CreateFilesystem() {
+	// create proc
+	err := os.Mkdir("/proc", 0555)
+	if err != nil {
+		panic(err)
+	}
+	if err := unix.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+		panic(err)
+	}
+	err = os.Mkdir("/sys", 0555)
+	if err != nil {
+		panic(err)
+	}
+	if err := unix.Mount(
+		"sysfs",
+		"/sys",
+		"sysfs",
+		uintptr(unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV),
+		"",
+	); err != nil {
+		panic(err)
+	}
+	err = os.Mkdir("/proc", 0555)
+	if err != nil {
+		panic(err)
+	}
+	if err := unix.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+		panic(err)
+	}
 }
