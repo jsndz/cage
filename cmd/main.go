@@ -10,83 +10,122 @@ import (
 )
 
 func main() {
-	args := os.Args
-	cmd := exec.Command(args[1], args[2:]...)
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		initContainer()
+		return
+	}
 
-	flags :=
-		syscall.CLONE_NEWPID | // PID namespace
-			syscall.CLONE_NEWNS | // Mount namespace
-			syscall.CLONE_NEWUTS // Hostname (UTS) namespace
+	cmd := exec.Command("/proc/self/exe", "init")
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: uintptr(flags),
+		Cloneflags: uintptr(
+			syscall.CLONE_NEWPID |
+				syscall.CLONE_NEWNS |
+				syscall.CLONE_NEWUTS,
+		),
 	}
 
+	if err := cmd.Run(); err != nil {
+		panic(err)
+	}
 }
 
-func InitContainer() {
-
+func initContainer() {
 	rootfs := "/tmp/rootfs"
-	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
-		panic(err)
-	}
-	// change the dir to mount point
-	// pivot_root takes mount point and mount point is entry in a mount table
-	// binding to itself to make it a mount point
-	if err := unix.Mount(rootfs, rootfs, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-		panic(err)
-	}
-	// use pivot for switching root
-	putOld := filepath.Join(rootfs, ".oldroot")
-	if err := os.MkdirAll(putOld, 0755); err != nil {
-		panic(err)
-	}
-	if err := unix.PivotRoot(rootfs, putOld); err != nil {
-		panic(err)
-	}
-	// since you are creating a file sys you need
-	// proc, sys, dev and bin for binary and lib
 
-	CreateFilesystem() // for now or can use base image
-
-	// container is centered around a process
-	// process has a root pointer to  /
-	// so it like a pointer having swtiched around the / and /rootfs
-	// switched place but oldroot is pointing to /
-	// unmount that
-	if err := unix.Unmount(putOld, unix.MNT_DETACH); err != nil {
+	if err := unix.Sethostname([]byte("cage")); err != nil {
 		panic(err)
 	}
 
-}
-
-func CreateFilesystem() {
-	// create proc
-	err := os.Mkdir("/proc", 0555)
-	if err != nil {
-		panic(err)
-	}
-	if err := unix.Mount("proc", "/proc", "proc", 0, ""); err != nil {
-		panic(err)
-	}
-	err = os.Mkdir("/sys", 0555)
-	if err != nil {
-		panic(err)
-	}
 	if err := unix.Mount(
-		"sysfs",
-		"/sys",
-		"sysfs",
-		uintptr(unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV),
+		"",
+		"/",
+		"",
+		unix.MS_PRIVATE|unix.MS_REC,
 		"",
 	); err != nil {
 		panic(err)
 	}
-	err = os.Mkdir("/proc", 0555)
-	if err != nil {
+
+	if err := unix.Mount(
+		rootfs,
+		rootfs,
+		"",
+		unix.MS_BIND|unix.MS_REC,
+		"",
+	); err != nil {
 		panic(err)
 	}
-	if err := unix.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+
+	putOld := filepath.Join(rootfs, ".oldroot")
+
+	if err := os.MkdirAll(putOld, 0755); err != nil {
+		panic(err)
+	}
+
+	if err := unix.PivotRoot(rootfs, putOld); err != nil {
+		panic(err)
+	}
+
+	if err := os.Chdir("/"); err != nil {
+		panic(err)
+	}
+
+	setupFilesystem()
+
+	if err := unix.Unmount("/.oldroot", unix.MNT_DETACH); err != nil {
+		panic(err)
+	}
+
+	if err := os.RemoveAll("/.oldroot"); err != nil {
+		panic(err)
+	}
+
+	if err := syscall.Exec(
+		"/bin/bash",
+		[]string{"/bin/bash"},
+		os.Environ(),
+	); err != nil {
+		panic(err)
+	}
+}
+
+func setupFilesystem() {
+	os.MkdirAll("/proc", 0555)
+	os.MkdirAll("/sys", 0555)
+	os.MkdirAll("/dev", 0755)
+
+	if err := unix.Mount(
+		"proc",
+		"/proc",
+		"proc",
+		0,
+		"",
+	); err != nil {
+		panic(err)
+	}
+
+	if err := unix.Mount(
+		"sysfs",
+		"/sys",
+		"sysfs",
+		unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV,
+		"",
+	); err != nil {
+		panic(err)
+	}
+
+	if err := unix.Mount(
+		"tmpfs",
+		"/dev",
+		"tmpfs",
+		0,
+		"",
+	); err != nil {
 		panic(err)
 	}
 }
