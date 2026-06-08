@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,8 +36,21 @@ func main() {
 }
 
 func initContainer() {
-	rootfs := "/tmp/rootfs"
+	lowerlayer := "/tmp/rootfs"
+	upperlayer := "/tmp/overlay/upper"
+	workdir := "/tmp/overlay/work"
+	merged := "/tmp/overlay/merged"
 
+	os.Mkdir(upperlayer, 0755)
+	os.Mkdir(workdir, 0755)
+	os.Mkdir(merged, 0755)
+
+	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerlayer, upperlayer, workdir)
+	if err := unix.Mount("overlay", merged, "overlay", 0, opts); err != nil {
+		panic(err)
+	}
+
+	rootfs := merged
 	if err := unix.Sethostname([]byte("cage")); err != nil {
 		panic(err)
 	}
