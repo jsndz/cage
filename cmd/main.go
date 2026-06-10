@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -15,6 +16,16 @@ func main() {
 		initContainer()
 		return
 	}
+	cg := "/sys/fs/cgroup/cage"
+	os.MkdirAll(cg, 0755)
+	os.WriteFile(cg+"/memory.max",
+		[]byte("536870912"),
+		0644,
+	)
+	os.WriteFile(cg+"/pids.max",
+		[]byte("100"),
+		0644,
+	)
 
 	cmd := exec.Command("/proc/self/exe", "init")
 
@@ -30,9 +41,16 @@ func main() {
 		),
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
+	pid := cmd.Process.Pid
+	os.WriteFile(
+		"/sys/fs/cgroup/cage/cgroup.procs",
+		[]byte(strconv.Itoa(pid)),
+		0644,
+	)
+	cmd.Wait()
 }
 
 func initContainer() {
