@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,16 +17,24 @@ func main() {
 		initContainer()
 		return
 	}
+	cpu := flag.Int("cpu", 4, "maximum number of cpu cores")
+	memory := flag.Int("mem", 536870912, "maximum amount of memory needed")
+	pids := flag.Int("pids", 100, "maximum number of pids")
+
+	flag.Parse()
 	cg := "/sys/fs/cgroup/cage"
+	defer os.RemoveAll(cg)
 	os.MkdirAll(cg, 0755)
 	os.WriteFile(cg+"/memory.max",
-		[]byte("536870912"),
+		[]byte(strconv.Itoa(*memory)),
 		0644,
 	)
 	os.WriteFile(cg+"/pids.max",
-		[]byte("100"),
+		[]byte(strconv.Itoa(*pids)),
 		0644,
 	)
+	quota := *cpu * 100000
+	os.WriteFile(cg+"/cpu.max", []byte(fmt.Sprintf("%d 100000", quota)), 0644)
 
 	cmd := exec.Command("/proc/self/exe", "init")
 
@@ -51,6 +60,9 @@ func main() {
 		0644,
 	)
 	cmd.Wait()
+	unix.Unmount("/tmp/overlay/merged", 0)
+	os.RemoveAll("/tmp/overlay")
+	os.Remove(cg)
 }
 
 func initContainer() {
@@ -59,9 +71,9 @@ func initContainer() {
 	workdir := "/tmp/overlay/work"
 	merged := "/tmp/overlay/merged"
 
-	os.Mkdir(upperlayer, 0755)
-	os.Mkdir(workdir, 0755)
-	os.Mkdir(merged, 0755)
+	os.MkdirAll(upperlayer, 0755)
+	os.MkdirAll(workdir, 0755)
+	os.MkdirAll(merged, 0755)
 
 	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerlayer, upperlayer, workdir)
 	if err := unix.Mount("overlay", merged, "overlay", 0, opts); err != nil {
