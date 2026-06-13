@@ -2,6 +2,7 @@ package main
 
 import (
 	"cage/internals/cgroup"
+	"cage/internals/network"
 	"cage/internals/runtime"
 	"flag"
 	"os"
@@ -18,11 +19,16 @@ func main() {
 
 	flag.Parse()
 
-	limits := cgroup.Limits{
+	limits := &cgroup.Limits{
 		CpuMax:    *cpu,
 		MemoryMax: *memory,
 		PidsMax:   *pids,
 	}
 
-	runtime.StartContainer(&limits)
+	bridge, err := network.GetorCreateBridge()
+	if err != nil {
+		panic(err)
+	}
+
+	runtime.StartContainer(limits, bridge)
 }

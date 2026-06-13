@@ -3,16 +3,18 @@ package runtime
 import (
 	"cage/internals/cgroup"
 	"cage/internals/filesystem"
+	"cage/internals/network"
 	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
 
+	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
-// StartContainer sets up cgroups, clones namespaces, and runs the container.
-func StartContainer(limits *cgroup.Limits) {
+// StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
+func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	cm := cgroup.NewCgroupManager("cage1")
 	if err := cm.ApplyLimits(limits); err != nil {
 		panic(err)
@@ -45,7 +47,8 @@ func StartContainer(limits *cgroup.Limits) {
 	); err != nil {
 		panic(err)
 	}
-
+	hostnet := "veth-host" + strconv.Itoa(pid)
+	network.SetUpContainerNetwork(pid, bridge, "eth0", hostnet)
 	cmd.Wait()
 
 	if err := filesystem.CleanOverlay("/tmp/overlay/merged", "/tmp/overlay"); err != nil {
@@ -53,6 +56,9 @@ func StartContainer(limits *cgroup.Limits) {
 	}
 
 	if err := cm.Destroy(); err != nil {
+		panic(err)
+	}
+	if err := network.CleanBridge(hostnet); err != nil {
 		panic(err)
 	}
 }
@@ -76,6 +82,7 @@ func InitContainer() {
 		panic(err)
 	}
 
+	network.SetUpVeth("eth0")
 	if err := syscall.Exec(
 		"/bin/bash",
 		[]string{"/bin/bash"},
