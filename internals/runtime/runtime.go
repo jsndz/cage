@@ -34,7 +34,9 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 				syscall.CLONE_NEWNET,
 		),
 	}
+	r, w, _ := os.Pipe()
 
+	cmd.ExtraFiles = []*os.File{r}
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
@@ -49,6 +51,8 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	}
 	hostnet := "veth-host" + strconv.Itoa(pid)
 	network.SetUpContainerNetwork(pid, bridge, "eth0", hostnet)
+	w.Write([]byte{1})
+	w.Close()
 	cmd.Wait()
 
 	if err := filesystem.CleanOverlay("/tmp/overlay/merged", "/tmp/overlay"); err != nil {
@@ -81,7 +85,11 @@ func InitContainer() {
 	if err := filesystem.PivotRoot(merged); err != nil {
 		panic(err)
 	}
+	syncFile := os.NewFile(uintptr(3), "sync")
 
+	buf := make([]byte, 1)
+
+	syncFile.Read(buf)
 	network.SetUpVeth("eth0")
 	if err := syscall.Exec(
 		"/bin/bash",

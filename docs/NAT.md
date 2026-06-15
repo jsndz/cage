@@ -1,5 +1,11 @@
 NAT (Network Address Translation) rewrites packet addresses as they pass through a router.
 
+container has the ip address with eth0 net_device
+but it is private address
+and not recognisable since it is private
+you need to put it to NAT so that it can be marked with public ip
+nftables is one of the tools that implements NAT rules in the Linux kernel.
+
 It allows many private IPs to share one public IP.
 
 ---
