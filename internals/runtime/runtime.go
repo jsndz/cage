@@ -4,6 +4,7 @@ import (
 	"cage/internals/cgroup"
 	"cage/internals/filesystem"
 	"cage/internals/network"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -42,6 +43,7 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	}
 
 	pid := cmd.Process.Pid
+	fmt.Print("Container PID: ", pid, "\n")
 	if err := os.WriteFile(
 		"/sys/fs/cgroup/cage/cgroup.procs",
 		[]byte(strconv.Itoa(pid)),
@@ -91,6 +93,7 @@ func InitContainer() {
 
 	syncFile.Read(buf)
 	network.SetUpVeth("eth0")
+
 	if err := syscall.Exec(
 		"/bin/bash",
 		[]string{"/bin/bash"},

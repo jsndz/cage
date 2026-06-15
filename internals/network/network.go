@@ -11,6 +11,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var nextIP = 1
+
+func AssignIP(link netlink.Link, ip string) error {
+	addr, err := netlink.ParseAddr(ip)
+	if err != nil {
+		return err
+	}
+	return netlink.AddrAdd(link, addr)
+}
+
 func createBridge() (*netlink.Bridge, error) {
 	bridge := &netlink.Bridge{
 		LinkAttrs: netlink.LinkAttrs{
@@ -28,6 +38,9 @@ func createBridge() (*netlink.Bridge, error) {
 	if err := netlink.LinkSetUp(bridge); err != nil {
 		return nil, err
 	}
+	AssignIP(bridge, fmt.Sprintf("10.0.0.%d/24", nextIP))
+	nextIP++
+
 	return bridge, nil
 }
 func GetorCreateBridge() (*netlink.Bridge, error) {
@@ -72,18 +85,30 @@ func CreateVethPair(hostname, peername string) error {
 
 func ConnectContainer(hostname, peername string, containerPID int) {
 	// find the veth pair
+
 	host, _ := netlink.LinkByName(hostname)
 	netlink.LinkSetUp(host)
 	peer, _ := netlink.LinkByName(peername)
 	netlink.LinkSetNsPid(peer, containerPID)
-
 }
 
 func SetUpVeth(peername string) {
 	link, _ := netlink.LinkByName(peername)
+	AssignIP(link, fmt.Sprintf("10.0.0.%d/24", nextIP))
 	netlink.LinkSetUp(link)
+
 	lo, _ := netlink.LinkByName("lo")
 	netlink.LinkSetUp(lo)
+	// routing all traffic through the bridge
+	// for example, if we want to access google.com from the container
+	// the traffic will go from the container to the bridge and then to the internet through the host's network interface
+	route := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Gw:        net.ParseIP("10.0.0.1"),
+	}
+
+	netlink.RouteAdd(route)
+
 }
 
 func SetUpContainerNetwork(containerPid int, bridge *netlink.Bridge, peernet, hostnet string) {
@@ -275,7 +300,6 @@ func NftableSetup() error {
 		},
 	})
 	// internet -> container allowed if incoming interface is eth0 and outgoing interface is cage0 and connection state is established or related
-
 	conn.AddRule(&nftables.Rule{
 		Table: filterTable,
 		Chain: forwarding,
