@@ -22,8 +22,10 @@ The kernel maintains a buffer for the pipe.
 		panic(err)
 	}
 	hostnet := "veth-host" + strconv.Itoa(pid)
-	network.SetUpContainerNetwork(pid, bridge, "eth0", hostnet)
-	w.Write([]byte{1})
+	if err := network.SetUpContainerNetwork(pid, bridge, hostnet); err != nil {
+		panic(err)
+	}
+	w.Write([]byte(containerIP))
 	w.Close()
 	cmd.Wait()
 
@@ -33,10 +35,14 @@ The kernel maintains a buffer for the pipe.
 ```go 
 
 syncFile := os.NewFile(uintptr(3), "sync")
+defer syncFile.Close()
 
-buf := make([]byte, 1)
+ipBytes, err := io.ReadAll(syncFile)
+if err != nil {
+	panic(err)
+}
+containerIP := string(ipBytes)
 
-syncFile.Read(buf)
-network.SetUpVeth("eth0")
+network.SetUpVeth("eth0", containerIP)
 
 ```

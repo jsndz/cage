@@ -1,17 +1,19 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"runtime"
+	"strconv"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 )
-
-var nextIP = 1
 
 func AssignIP(link netlink.Link, ip string) error {
 	addr, err := netlink.ParseAddr(ip)
@@ -27,9 +29,6 @@ func createBridge() (*netlink.Bridge, error) {
 			Name: "cage0",
 		},
 	}
-	// equivalent of
-	//ip link add cage0 type bridge
-	// ip link set cage0 up
 
 	if err := netlink.LinkAdd(bridge); err != nil {
 		return nil, err
@@ -38,11 +37,13 @@ func createBridge() (*netlink.Bridge, error) {
 	if err := netlink.LinkSetUp(bridge); err != nil {
 		return nil, err
 	}
-	AssignIP(bridge, fmt.Sprintf("10.0.0.%d/24", nextIP))
-	nextIP++
+	if err := AssignIP(bridge, "10.0.0.1/24"); err != nil {
+		return nil, err
+	}
 
 	return bridge, nil
 }
+
 func GetorCreateBridge() (*netlink.Bridge, error) {
 	link, err := netlink.LinkByName("cage0")
 	if err != nil {
@@ -80,49 +81,181 @@ func CreateVethPair(hostname, peername string) error {
 	}
 
 	return netlink.LinkAdd(veth)
-
 }
 
-func ConnectContainer(hostname, peername string, containerPID int) {
-	// find the veth pair
-
-	host, _ := netlink.LinkByName(hostname)
-	netlink.LinkSetUp(host)
-	peer, _ := netlink.LinkByName(peername)
-	netlink.LinkSetNsPid(peer, containerPID)
+func ConnectContainer(hostname, peername string, containerPID int) error {
+	host, err := netlink.LinkByName(hostname)
+	if err != nil {
+		return err
+	}
+	if err := netlink.LinkSetUp(host); err != nil {
+		return err
+	}
+	peer, err := netlink.LinkByName(peername)
+	if err != nil {
+		return err
+	}
+	return netlink.LinkSetNsPid(peer, containerPID)
 }
 
-func SetUpVeth(peername string) {
-	link, _ := netlink.LinkByName(peername)
-	AssignIP(link, fmt.Sprintf("10.0.0.%d/24", nextIP))
-	netlink.LinkSetUp(link)
+func getIPsInNamespace(nsHandler netns.NsHandle) ([]string, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	// gets the current network namespace and switch to the target namespace
+	origns, err := netns.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer origns.Close()
+	// origin namespace is from the host
+	// ns handler is from the container
+	if err := netns.Set(nsHandler); err != nil {
+		return nil, err
+	}
+	// set the namespace back to the host after this function returns
+	defer netns.Set(origns)
+	// get the list of network interfaces and their IP addresses in the container namespace
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, err
+	}
 
-	lo, _ := netlink.LinkByName("lo")
-	netlink.LinkSetUp(lo)
-	// routing all traffic through the bridge
-	// for example, if we want to access google.com from the container
-	// the traffic will go from the container to the bridge and then to the internet through the host's network interface
+	var ips []string
+	for _, link := range links {
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ips = append(ips, addr.IP.String())
+		}
+	}
+
+	return ips, nil
+}
+
+func FindFreeIP() (string, error) {
+	// get the list of all veth-host* interfaces and their associated container IPs to find a free IP address in the
+	links, err := netlink.LinkList()
+	if err != nil {
+		return "", err
+	}
+
+	usedIPs := make(map[string]bool)
+	usedIPs["10.0.0.1"] = true
+
+	for _, link := range links {
+		name := link.Attrs().Name
+		if len(name) > 6 && name[:6] == "veth-h" {
+			pidStr := name[6:]
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil {
+				continue
+			}
+
+			nsHandler, err := netns.GetFromPid(pid)
+			if err != nil {
+				continue
+			}
+
+			ips, err := getIPsInNamespace(nsHandler)
+			nsHandler.Close()
+			if err != nil {
+				continue
+			}
+
+			for _, ip := range ips {
+				usedIPs[ip] = true
+			}
+		}
+	}
+
+	for i := 2; i < 255; i++ {
+		ipStr := fmt.Sprintf("10.0.0.%d", i)
+		if !usedIPs[ipStr] {
+			return ipStr + "/24", nil
+		}
+	}
+
+	return "", fmt.Errorf("no free IP addresses in 10.0.0.0/24 subnet")
+}
+
+func SetUpVeth(peername string, containerIP string) error {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return fmt.Errorf("failed to list network interfaces: %w", err)
+	}
+	var link netlink.Link
+	for _, l := range links {
+		name := l.Attrs().Name
+		if len(name) > 6 && name[:6] == "veth-g" {
+			link = l
+			break
+		}
+	}
+
+	if link == nil {
+		return fmt.Errorf("failed to find any guest veth link starting with 'veth-g'")
+	}
+
+	_ = netlink.LinkSetDown(link)
+
+	if err := netlink.LinkSetName(link, peername); err != nil {
+		return fmt.Errorf("failed to rename link to %s: %w", peername, err)
+	}
+
+	link, err = netlink.LinkByName(peername)
+	if err != nil {
+		return fmt.Errorf("failed to find renamed link %s: %w", peername, err)
+	}
+
+	if err := AssignIP(link, containerIP); err != nil {
+		return fmt.Errorf("failed to assign IP %s to %s: %w", containerIP, peername, err)
+	}
+
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("failed to set link %s up: %w", peername, err)
+	}
+
+	lo, err := netlink.LinkByName("lo")
+	if err == nil {
+		_ = netlink.LinkSetUp(lo)
+	}
+
 	route := &netlink.Route{
 		LinkIndex: link.Attrs().Index,
 		Gw:        net.ParseIP("10.0.0.1"),
 	}
 
-	netlink.RouteAdd(route)
+	if err := netlink.RouteAdd(route); err != nil {
+		return fmt.Errorf("failed to add default route: %w", err)
+	}
 
+	return nil
 }
 
-func SetUpContainerNetwork(containerPid int, bridge *netlink.Bridge, peernet, hostnet string) {
-	CreateVethPair(hostnet, peernet)
+func SetUpContainerNetwork(containerPid int, bridge *netlink.Bridge, hostnet string) error {
+	guestnet := "veth-g" + strconv.Itoa(containerPid)
+	if err := CreateVethPair(hostnet, guestnet); err != nil {
+		return fmt.Errorf("failed to create veth pair: %w", err)
+	}
 	//connect host to bridge
-	ConnectToBridge(hostnet, bridge)
+	if err := ConnectToBridge(hostnet, bridge); err != nil {
+		return fmt.Errorf("failed to connect host to bridge: %w", err)
+	}
 	// move peer to container
-	ConnectContainer(hostnet, peernet, containerPid)
+	if err := ConnectContainer(hostnet, guestnet, containerPid); err != nil {
+		return fmt.Errorf("failed to move peer to container: %w", err)
+	}
 
-	NftableSetup()
+	if err := NftableSetup(); err != nil {
+		return fmt.Errorf("failed to setup nftables: %w", err)
+	}
+	return nil
 }
 
 func CleanBridge(hostnet string) error {
-	link, err := netlink.LinkByName("")
+	link, err := netlink.LinkByName(hostnet)
 	if err != nil {
 		return err
 	}
@@ -136,21 +269,22 @@ func CleanBridge(hostnet string) error {
 func getDefaultInterface() (string, error) {
 	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
 	if err != nil {
-		return "", err
+		return "", errors.New("failed to list routes: " + err.Error())
 	}
 
 	for _, r := range routes {
 		if r.Dst == nil { // default route
 			link, err := netlink.LinkByIndex(r.LinkIndex)
 			if err != nil {
-				return "", err
+				return "", errors.New("failed to get link by index: " + err.Error())
 			}
 
 			return link.Attrs().Name, nil
 		}
 	}
-	return "", fmt.Errorf("default interface not found")
+	return "eth0", nil
 }
+
 func tableExists(conn *nftables.Conn, family nftables.TableFamily, name string) (bool, error) {
 	tables, err := conn.ListTables()
 	if err != nil {
@@ -172,33 +306,31 @@ func ifnameBytes(name string) []byte {
 }
 
 func NftableSetup() error {
-
 	conn, err := nftables.New()
 	if err != nil {
-		return err
+		return errors.New("failed to create nftables connection: " + err.Error())
 	}
 
 	natExists, err := tableExists(conn, nftables.TableFamilyIPv4, "cage_nat")
 	if err != nil {
-		return err
+		return errors.New("failed to check if nat table exists: " + err.Error())
 	}
 	filterExists, err := tableExists(conn, nftables.TableFamilyINet, "cage_filter")
 	if err != nil {
-		return err
+		return errors.New("failed to check if filter table exists: " + err.Error())
 	}
 	if natExists && filterExists {
 		return nil
 	}
 	inf, err := getDefaultInterface()
 	if err != nil {
-		return err
+		return errors.New("failed to get default interface: " + err.Error())
 	}
 
 	natTable := conn.AddTable(&nftables.Table{
 		Family: nftables.TableFamilyIPv4,
 		Name:   "cage_nat",
 	})
-	// A chain in nftables is a container for rules.
 	postrouting := conn.AddChain(&nftables.Chain{
 		Name:     "postrouting",
 		Table:    natTable,
@@ -206,12 +338,9 @@ func NftableSetup() error {
 		Hooknum:  nftables.ChainHookPostrouting,
 		Priority: nftables.ChainPriorityNATSource,
 	})
-	// rules represent how data will be handled
-	// here we are matching packets with source IP in 10.0.0.0/24 and outgoing interface eth0, and then applying masquerading to them
-	//i.e, data going from eth0 with ip 10.0.0.0/24 masquerade the ip with some other ip meaning giving public ip
 	_, subnet, err := net.ParseCIDR("10.0.0.0/24")
 	if err != nil {
-		return err
+		return errors.New("failed to parse subnet: " + err.Error())
 	}
 	conn.AddRule(&nftables.Rule{
 		Table: natTable,
@@ -244,7 +373,7 @@ func NftableSetup() error {
 				Register: 1,
 			},
 
-			// Match "eth0"
+			// Match outgoing interface
 			&expr.Cmp{
 				Register: 1,
 				Op:       expr.CmpOpEq,
@@ -267,7 +396,7 @@ func NftableSetup() error {
 		Policy:   &policy,
 		Priority: nftables.ChainPriorityFilter,
 	})
-	// container -> internet allowed if outgoing interface is eth0 and incoming interface is cage0
+	// container -> internet allowed if outgoing interface is inf and incoming interface is cage0
 	conn.AddRule(&nftables.Rule{
 		Table: filterTable,
 		Chain: forwarding,
@@ -282,7 +411,6 @@ func NftableSetup() error {
 				Data:     ifnameBytes("cage0"),
 			},
 
-			// oifname "eth0"
 			&expr.Meta{
 				Key:      expr.MetaKeyOIFNAME,
 				Register: 1,
@@ -299,12 +427,11 @@ func NftableSetup() error {
 			},
 		},
 	})
-	// internet -> container allowed if incoming interface is eth0 and outgoing interface is cage0 and connection state is established or related
+	// internet -> container allowed if incoming interface is inf and outgoing interface is cage0 and connection state is established or related
 	conn.AddRule(&nftables.Rule{
 		Table: filterTable,
 		Chain: forwarding,
 		Exprs: []expr.Any{
-			// iifname "eth0"
 			&expr.Meta{
 				Key:      expr.MetaKeyIIFNAME,
 				Register: 1,
@@ -314,8 +441,6 @@ func NftableSetup() error {
 				Op:       expr.CmpOpEq,
 				Data:     ifnameBytes(inf),
 			},
-
-			// oifname "cage0"
 			&expr.Meta{
 				Key:      expr.MetaKeyOIFNAME,
 				Register: 1,
@@ -355,14 +480,14 @@ func NftableSetup() error {
 		},
 	})
 	if err := conn.Flush(); err != nil {
-		return err
+		return errors.New("failed to flush nftables rules: " + err.Error())
 	}
 	if err := os.WriteFile(
 		"/proc/sys/net/ipv4/ip_forward",
 		[]byte("1"),
 		0644,
 	); err != nil {
-		return err
+		return errors.New("failed to enable IP forwarding: " + err.Error())
 	}
 	return nil
 }

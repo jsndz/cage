@@ -5,6 +5,7 @@ import (
 	"cage/internals/filesystem"
 	"cage/internals/network"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -18,6 +19,11 @@ import (
 func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	cm := cgroup.NewCgroupManager("cage1")
 	if err := cm.ApplyLimits(limits); err != nil {
+		panic(err)
+	}
+
+	containerIP, err := network.FindFreeIP()
+	if err != nil {
 		panic(err)
 	}
 
@@ -51,9 +57,13 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	); err != nil {
 		panic(err)
 	}
-	hostnet := "veth-host" + strconv.Itoa(pid)
-	network.SetUpContainerNetwork(pid, bridge, "eth0", hostnet)
-	w.Write([]byte{1})
+	hostnet := "veth-h" + strconv.Itoa(pid)
+	if err := network.SetUpContainerNetwork(pid, bridge, hostnet); err != nil {
+		panic(err)
+	}
+	if _, err := w.Write([]byte(containerIP)); err != nil {
+		panic(err)
+	}
 	w.Close()
 	cmd.Wait()
 
@@ -88,15 +98,21 @@ func InitContainer() {
 		panic(err)
 	}
 	syncFile := os.NewFile(uintptr(3), "sync")
+	defer syncFile.Close()
 
-	buf := make([]byte, 1)
+	ipBytes, err := io.ReadAll(syncFile)
+	if err != nil {
+		panic(err)
+	}
+	containerIP := string(ipBytes)
 
-	syncFile.Read(buf)
-	network.SetUpVeth("eth0")
+	if err := network.SetUpVeth("eth0", containerIP); err != nil {
+		panic(err)
+	}
 
 	if err := syscall.Exec(
-		"/bin/bash",
-		[]string{"/bin/bash"},
+		"/bin/sh",
+		[]string{"/bin/sh"},
 		os.Environ(),
 	); err != nil {
 		panic(err)
