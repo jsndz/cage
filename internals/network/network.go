@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 
@@ -185,6 +186,7 @@ func SetUpVeth(peername string, containerIP string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list network interfaces: %w", err)
 	}
+	// find the veth link that starts with "veth-g" which is the peer in the container namespace
 	var link netlink.Link
 	for _, l := range links {
 		name := l.Attrs().Name
@@ -199,7 +201,7 @@ func SetUpVeth(peername string, containerIP string) error {
 	}
 
 	_ = netlink.LinkSetDown(link)
-
+	// chanfe veth-g to eth0
 	if err := netlink.LinkSetName(link, peername); err != nil {
 		return fmt.Errorf("failed to rename link to %s: %w", peername, err)
 	}
@@ -266,23 +268,11 @@ func CleanBridge(hostnet string) error {
 	return nil
 }
 
-func getDefaultInterface() (string, error) {
-	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
-	if err != nil {
-		return "", errors.New("failed to list routes: " + err.Error())
-	}
-
-	for _, r := range routes {
-		if r.Dst == nil { // default route
-			link, err := netlink.LinkByIndex(r.LinkIndex)
-			if err != nil {
-				return "", errors.New("failed to get link by index: " + err.Error())
-			}
-
-			return link.Attrs().Name, nil
-		}
-	}
-	return "eth0", nil
+func iptablesSetup() {
+	// Add rules to iptables to allow forwarding on cage0 in case Docker or UFW has a default DROP policy.
+	// We ignore errors since iptables might not be installed or available.
+	_ = exec.Command("iptables", "-I", "FORWARD", "-i", "cage0", "-j", "ACCEPT").Run()
+	_ = exec.Command("iptables", "-I", "FORWARD", "-o", "cage0", "-j", "ACCEPT").Run()
 }
 
 func tableExists(conn *nftables.Conn, family nftables.TableFamily, name string) (bool, error) {
@@ -312,19 +302,21 @@ func NftableSetup() error {
 	}
 
 	natExists, err := tableExists(conn, nftables.TableFamilyIPv4, "cage_nat")
-	if err != nil {
-		return errors.New("failed to check if nat table exists: " + err.Error())
+	if err == nil && natExists {
+		conn.DelTable(&nftables.Table{
+			Family: nftables.TableFamilyIPv4,
+			Name:   "cage_nat",
+		})
 	}
 	filterExists, err := tableExists(conn, nftables.TableFamilyINet, "cage_filter")
-	if err != nil {
-		return errors.New("failed to check if filter table exists: " + err.Error())
+	if err == nil && filterExists {
+		conn.DelTable(&nftables.Table{
+			Family: nftables.TableFamilyINet,
+			Name:   "cage_filter",
+		})
 	}
-	if natExists && filterExists {
-		return nil
-	}
-	inf, err := getDefaultInterface()
-	if err != nil {
-		return errors.New("failed to get default interface: " + err.Error())
+	if (err == nil && natExists) || (err == nil && filterExists) {
+		_ = conn.Flush()
 	}
 
 	natTable := conn.AddTable(&nftables.Table{
@@ -373,11 +365,11 @@ func NftableSetup() error {
 				Register: 1,
 			},
 
-			// Match outgoing interface
+			// Match outgoing interface != "cage0"
 			&expr.Cmp{
 				Register: 1,
-				Op:       expr.CmpOpEq,
-				Data:     ifnameBytes(inf),
+				Op:       expr.CmpOpNeq,
+				Data:     ifnameBytes("cage0"),
 			},
 
 			&expr.Masq{},
@@ -396,7 +388,8 @@ func NftableSetup() error {
 		Policy:   &policy,
 		Priority: nftables.ChainPriorityFilter,
 	})
-	// container -> internet allowed if outgoing interface is inf and incoming interface is cage0
+
+	// forwarding: iifname "cage0" accept
 	conn.AddRule(&nftables.Rule{
 		Table: filterTable,
 		Chain: forwarding,
@@ -410,37 +403,17 @@ func NftableSetup() error {
 				Op:       expr.CmpOpEq,
 				Data:     ifnameBytes("cage0"),
 			},
-
-			&expr.Meta{
-				Key:      expr.MetaKeyOIFNAME,
-				Register: 1,
-			},
-			&expr.Cmp{
-				Register: 1,
-				Op:       expr.CmpOpEq,
-				Data:     ifnameBytes(inf),
-			},
-
-			// accept
 			&expr.Verdict{
 				Kind: expr.VerdictAccept,
 			},
 		},
 	})
-	// internet -> container allowed if incoming interface is inf and outgoing interface is cage0 and connection state is established or related
+
+	// forwarding: oifname "cage0" ct state established,related accept
 	conn.AddRule(&nftables.Rule{
 		Table: filterTable,
 		Chain: forwarding,
 		Exprs: []expr.Any{
-			&expr.Meta{
-				Key:      expr.MetaKeyIIFNAME,
-				Register: 1,
-			},
-			&expr.Cmp{
-				Register: 1,
-				Op:       expr.CmpOpEq,
-				Data:     ifnameBytes(inf),
-			},
 			&expr.Meta{
 				Key:      expr.MetaKeyOIFNAME,
 				Register: 1,
@@ -450,7 +423,6 @@ func NftableSetup() error {
 				Op:       expr.CmpOpEq,
 				Data:     ifnameBytes("cage0"),
 			},
-
 			// ct state established,related
 			&expr.Ct{
 				Key:      expr.CtKeySTATE,
@@ -472,13 +444,12 @@ func NftableSetup() error {
 				Op:       expr.CmpOpNeq,
 				Data:     []byte{0, 0, 0, 0},
 			},
-
-			// accept
 			&expr.Verdict{
 				Kind: expr.VerdictAccept,
 			},
 		},
 	})
+
 	if err := conn.Flush(); err != nil {
 		return errors.New("failed to flush nftables rules: " + err.Error())
 	}
@@ -489,5 +460,8 @@ func NftableSetup() error {
 	); err != nil {
 		return errors.New("failed to enable IP forwarding: " + err.Error())
 	}
+
+	iptablesSetup()
+
 	return nil
 }

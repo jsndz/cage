@@ -94,6 +94,14 @@ func InitContainer() {
 		panic(err)
 	}
 
+	// Write default resolv.conf to configure DNS resolver (e.g., 8.8.8.8) inside the container
+	if err := os.MkdirAll(merged+"/etc", 0755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(merged+"/etc/resolv.conf", []byte("nameserver 8.8.8.8\n"), 0644); err != nil {
+		panic(err)
+	}
+
 	if err := filesystem.PivotRoot(merged); err != nil {
 		panic(err)
 	}
