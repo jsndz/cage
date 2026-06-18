@@ -1,13 +1,15 @@
 package main
 
 import (
-	"cage/internals/cgroup"
 	"cage/internals/network"
+	"cage/internals/resources"
 	"cage/internals/runtime"
+	"cage/internals/security"
 	"cage/utils"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -19,15 +21,27 @@ func main() {
 	memory := flag.Int64("mem", 536870912, "maximum amount of memory needed")
 	pids := flag.Int("pids", 100, "maximum number of pids")
 	portMapStr := flag.String("p", "", "port forwarding mapping (e.g. 8080:80)")
-
+	profile := flag.String("profile", "", "linux capablities profile(e.g. default, restricted, privileged)")
+	addCap := flag.String("cap-add", "", "add linux capabilities(e.g. CAP_SYS_ADMIN,CAP_NET_ADMIN)")
+	dropCap := flag.String("cap-drop", "", "drop linux capabilites(e.g. )")
 	flag.Parse()
 
-	limits := &cgroup.Limits{
+	limits := &resources.Limits{
 		CpuMax:    *cpu,
 		MemoryMax: *memory,
 		PidsMax:   *pids,
 	}
-
+	securityConfig := &security.SecurityConfig{
+		Profile: *profile,
+		CapAdd:  []string{},
+		CapDrop: []string{},
+	}
+	if *addCap != "" {
+		securityConfig.CapAdd = append(securityConfig.CapAdd, strings.Split(*addCap, ",")...)
+	}
+	if *dropCap != "" {
+		securityConfig.CapDrop = append(securityConfig.CapDrop, strings.Split(*dropCap, ",")...)
+	}
 	var portMap *network.PortMapping
 	if *portMapStr != "" {
 		var hostPort, containerPort int
@@ -46,5 +60,5 @@ func main() {
 		panic(err)
 	}
 	id := utils.NewID()
-	runtime.StartContainer(id, limits, bridge, portMap)
+	runtime.StartContainer(id, limits, bridge, portMap, securityConfig)
 }

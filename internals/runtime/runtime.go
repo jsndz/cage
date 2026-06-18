@@ -1,9 +1,10 @@
 package runtime
 
 import (
-	"cage/internals/cgroup"
 	"cage/internals/filesystem"
 	"cage/internals/network"
+	"cage/internals/resources"
+	"cage/internals/security"
 	"fmt"
 	"io"
 	"os"
@@ -18,9 +19,9 @@ import (
 )
 
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
-func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.Bridge, portMap *network.PortMapping) {
+func StartContainer(containerID string, limits *resources.Limits, bridge *netlink.Bridge, portMap *network.PortMapping, securityConfig *security.SecurityConfig) {
 	sb := CreateSandbox(containerID)
-	cm := cgroup.NewCgroupManager(containerID)
+	cm := resources.NewCgroupManager(containerID)
 	if err := cm.ApplyLimits(limits); err != nil {
 		panic(err)
 	}
@@ -63,6 +64,7 @@ func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.B
 	); err != nil {
 		panic(err)
 	}
+	securityConfig.SetUpCapabilities(pid)
 	hostnet := "veth-h" + strconv.Itoa(pid)
 	if err := network.SetUpContainerNetwork(pid, bridge, hostnet); err != nil {
 		panic(err)

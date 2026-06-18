@@ -1,4 +1,4 @@
-package cgroup
+package resources
 
 type Limits struct {
 	MemoryMax int64

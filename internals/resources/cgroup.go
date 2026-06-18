@@ -1,4 +1,4 @@
-package cgroup
+package resources
 
 import (
 	"fmt"
