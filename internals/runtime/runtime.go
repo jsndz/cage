@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -16,12 +17,13 @@ import (
 )
 
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
-func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
-	cm := cgroup.NewCgroupManager("cage1")
+func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.Bridge) {
+	sb := CreateSandbox(containerID)
+	cm := cgroup.NewCgroupManager(containerID)
 	if err := cm.ApplyLimits(limits); err != nil {
 		panic(err)
 	}
-
+	sb.Cgroup = cm.Path
 	containerIP, err := network.FindFreeIP()
 	if err != nil {
 		panic(err)
@@ -49,9 +51,12 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	}
 
 	pid := cmd.Process.Pid
+	sb.Pid = pid
+	sb.Status = "starting"
 	fmt.Print("Container PID: ", pid, "\n")
+
 	if err := os.WriteFile(
-		"/sys/fs/cgroup/cage/cgroup.procs",
+		filepath.Join(cm.Path, "cgroup.procs"),
 		[]byte(strconv.Itoa(pid)),
 		0644,
 	); err != nil {
@@ -64,6 +69,10 @@ func StartContainer(limits *cgroup.Limits, bridge *netlink.Bridge) {
 	if _, err := w.Write([]byte(containerIP)); err != nil {
 		panic(err)
 	}
+
+	sb.IpAddr = containerIP
+	sb.Status = "running"
+
 	w.Close()
 	cmd.Wait()
 

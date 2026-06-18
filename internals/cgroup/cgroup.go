@@ -22,8 +22,10 @@ func NewCgroupManager(id string) *CgroupManager {
 }
 
 func (cm *CgroupManager) ApplyLimits(limits *Limits) error {
-	cg := "/sys/fs/cgroup/cage"
-	os.MkdirAll(cg, 0755)
+	cg := cm.Path
+	if err := os.MkdirAll(cg, 0755); err != nil {
+		return err
+	}
 	os.WriteFile(cg+"/memory.max",
 		[]byte(strconv.Itoa(int(limits.MemoryMax))),
 		0644,

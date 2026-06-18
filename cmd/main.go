@@ -4,11 +4,14 @@ import (
 	"cage/internals/cgroup"
 	"cage/internals/network"
 	"cage/internals/runtime"
+	"cage/utils"
 	"flag"
 	"os"
 )
 
 func main() {
+	id := utils.NewID()
+
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		runtime.InitContainer()
 		return
@@ -30,5 +33,5 @@ func main() {
 		panic(err)
 	}
 
-	runtime.StartContainer(limits, bridge)
+	runtime.StartContainer(id, limits, bridge)
 }
