@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/vishvananda/netlink"
@@ -17,7 +18,7 @@ import (
 )
 
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
-func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.Bridge) {
+func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.Bridge, portMap *network.PortMapping) {
 	sb := CreateSandbox(containerID)
 	cm := cgroup.NewCgroupManager(containerID)
 	if err := cm.ApplyLimits(limits); err != nil {
@@ -72,6 +73,16 @@ func StartContainer(containerID string, limits *cgroup.Limits, bridge *netlink.B
 
 	sb.IpAddr = containerIP
 	sb.Status = "running"
+	fmt.Println(portMap)
+	if portMap != nil {
+		ip := containerIP
+		if idx := strings.Index(ip, "/"); idx != -1 {
+			ip = ip[:idx]
+		}
+		if err := network.AddPortForwarding(portMap.HostPort, ip, portMap.ContainerPort, bridge.Attrs().Name); err != nil {
+			panic(err)
+		}
+	}
 
 	w.Close()
 	cmd.Wait()

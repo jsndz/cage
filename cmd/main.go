@@ -6,12 +6,11 @@ import (
 	"cage/internals/runtime"
 	"cage/utils"
 	"flag"
+	"fmt"
 	"os"
 )
 
 func main() {
-	id := utils.NewID()
-
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		runtime.InitContainer()
 		return
@@ -19,6 +18,7 @@ func main() {
 	cpu := flag.Int("cpu", 4, "maximum number of cpu cores")
 	memory := flag.Int64("mem", 536870912, "maximum amount of memory needed")
 	pids := flag.Int("pids", 100, "maximum number of pids")
+	portMapStr := flag.String("p", "", "port forwarding mapping (e.g. 8080:80)")
 
 	flag.Parse()
 
@@ -28,10 +28,23 @@ func main() {
 		PidsMax:   *pids,
 	}
 
+	var portMap *network.PortMapping
+	if *portMapStr != "" {
+		var hostPort, containerPort int
+		_, err := fmt.Sscanf(*portMapStr, "%d:%d", &hostPort, &containerPort)
+		if err != nil {
+			panic("Invalid port mapping format. Expected hostPort:containerPort (e.g., 8080:80)")
+		}
+		portMap = &network.PortMapping{
+			HostPort:      hostPort,
+			ContainerPort: containerPort,
+		}
+	}
+
 	bridge, err := network.GetorCreateBridge()
 	if err != nil {
 		panic(err)
 	}
-
-	runtime.StartContainer(id, limits, bridge)
+	id := utils.NewID()
+	runtime.StartContainer(id, limits, bridge, portMap)
 }

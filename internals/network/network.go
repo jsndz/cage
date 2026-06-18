@@ -16,6 +16,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type PortMapping struct {
+	HostPort      int
+	ContainerPort int
+}
+
 func AssignIP(link netlink.Link, ip string) error {
 	addr, err := netlink.ParseAddr(ip)
 	if err != nil {
@@ -449,7 +454,21 @@ func NftableSetup() error {
 			},
 		},
 	})
+	conn.AddChain(&nftables.Chain{
+		Name:     "prerouting",
+		Table:    natTable,
+		Type:     nftables.ChainTypeNAT,
+		Hooknum:  nftables.ChainHookPrerouting,
+		Priority: nftables.ChainPriorityNATDest,
+	})
 
+	conn.AddChain(&nftables.Chain{
+		Name:     "output",
+		Table:    natTable,
+		Type:     nftables.ChainTypeNAT,
+		Hooknum:  nftables.ChainHookOutput,
+		Priority: nftables.ChainPriorityNATDest,
+	})
 	if err := conn.Flush(); err != nil {
 		return errors.New("failed to flush nftables rules: " + err.Error())
 	}
@@ -462,6 +481,29 @@ func NftableSetup() error {
 	}
 
 	iptablesSetup()
+
+	return nil
+}
+
+func AddPortForwarding(hostPort int, containerIP string, containerPort int, bridgename string) error {
+	rule := fmt.Sprintf("tcp dport %d dnat to %s:%d", hostPort, containerIP, containerPort)
+
+	// Add rule to prerouting (external traffic)
+	cmdPrerouting := exec.Command("nft", "add", "rule", "ip", "cage_nat", "prerouting", rule)
+	if out, err := cmdPrerouting.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add prerouting dnat rule (stderr: %s): %w", string(out), err)
+	}
+
+	// Add rule to output (host-local traffic)
+	cmdOutput := exec.Command("nft", "add", "rule", "ip", "cage_nat", "output", rule)
+	if out, err := cmdOutput.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add output dnat rule (stderr: %s): %w", string(out), err)
+	}
+
+	cmdLocalhost := exec.Command("sudo", "nft", "add", "rule", "ip", "cage_nat", "postrouting", "ip", "saddr", "127.0.0.1", "oifname", fmt.Sprintf("\"%s\"", bridgename), "masquerade")
+	if out, err := cmdLocalhost.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add localhost masquerade rule (stderr: %s): %w", string(out), err)
+	}
 
 	return nil
 }

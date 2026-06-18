@@ -7,9 +7,3 @@ docker export $(docker create alpine:latest) \
 
 ```
 
-race condition
-now fix code for child process ready without having network ready
-using pipe
-
-then learn about nftables and NAT 
-and forwarding data
