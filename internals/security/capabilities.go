@@ -12,6 +12,24 @@ func init() {
 
 func (s *SecurityConfig) SetUpCapabilities(pid int) {
 	caps, _ := capability.NewPid2(pid)
+	if s.Profile != "" {
+		var cps []string
+		switch s.Profile {
+		case "default":
+			cps = DefaultCaps
+		case "sandbox":
+			cps = SandboxCaps
+		case "privileged":
+			cps = PrivilegedCaps
+		default:
+			cps = DefaultCaps
+		}
+		for _, cap := range cps {
+			caps.Set(capability.PERMITTED, CapabilityMap[cap])
+			caps.Set(capability.EFFECTIVE, CapabilityMap[cap])
+		}
+	}
+
 	for _, cap := range s.CapAdd {
 		caps.Set(capability.PERMITTED, CapabilityMap[cap])
 		caps.Set(capability.EFFECTIVE, CapabilityMap[cap])
