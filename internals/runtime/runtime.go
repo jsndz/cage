@@ -158,6 +158,11 @@ func InitContainer() {
 		panic(err)
 	}
 
+	// Install seccomp-bpf syscall filter based on the security profile
+	if err := payload.SecurityConfig.SetUpSeccomp(); err != nil {
+		panic(err)
+	}
+
 	// Prevent the process from gaining new privileges after exec
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		panic(err)
