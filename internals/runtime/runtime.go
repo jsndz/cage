@@ -19,8 +19,9 @@ import (
 )
 
 type initPayload struct {
-	ContainerIP    string                   `json:"container_ip"`
-	SecurityConfig *security.SecurityConfig `json:"security_config"`
+	ContainerIP     string                   `json:"container_ip"`
+	SecurityConfig  *security.SecurityConfig `json:"security_config"`
+	ApparmorProfile string                   `json:"apparmor_profile"`
 }
 
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
@@ -32,6 +33,12 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	}
 	sb.Cgroup = cm.Path
 	containerIP, err := network.FindFreeIP()
+	if err != nil {
+		panic(err)
+	}
+
+	// Load AppArmor profile into the kernel (must happen in parent before child exec's)
+	apparmorProfile, err := securityConfig.LoadApparmorProfile(containerID)
 	if err != nil {
 		panic(err)
 	}
@@ -77,8 +84,9 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	}
 	// Send config (IP + security) to child via pipe as JSON
 	payload := initPayload{
-		ContainerIP:    containerIP,
-		SecurityConfig: securityConfig,
+		ContainerIP:     containerIP,
+		SecurityConfig:  securityConfig,
+		ApparmorProfile: apparmorProfile,
 	}
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		panic(err)
@@ -108,6 +116,11 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 		panic(err)
 	}
 	if err := network.CleanBridge(hostnet); err != nil {
+		panic(err)
+	}
+
+	// Unload AppArmor profile from the kernel
+	if err := securityConfig.UnloadApparmorProfile(containerID); err != nil {
 		panic(err)
 	}
 }
@@ -160,6 +173,11 @@ func InitContainer() {
 
 	// Install seccomp-bpf syscall filter based on the security profile
 	if err := payload.SecurityConfig.SetUpSeccomp(); err != nil {
+		panic(err)
+	}
+
+	// Apply AppArmor profile — transitions on next exec()
+	if err := security.ApplyApparmorProfile(payload.ApparmorProfile); err != nil {
 		panic(err)
 	}
 
