@@ -1,6 +1,10 @@
 package security
 
-import "github.com/syndtr/gocapability/capability"
+import (
+	"fmt"
+
+	"github.com/syndtr/gocapability/capability"
+)
 
 var CapabilityMap = make(map[string]capability.Cap)
 
@@ -10,33 +14,50 @@ func init() {
 	}
 }
 
-func (s *SecurityConfig) SetUpCapabilities(pid int) {
-	caps, _ := capability.NewPid2(pid)
-	if s.Profile != "" {
-		var cps []string
-		switch s.Profile {
-		case "default":
-			cps = DefaultCaps
-		case "sandbox":
-			cps = SandboxCaps
-		case "privileged":
-			cps = PrivilegedCaps
-		default:
-			cps = DefaultCaps
+func (s *SecurityConfig) SetUpCapabilities() error {
+	caps, err := capability.NewPid2(0)
+	if err != nil {
+		return err
+	}
+
+	caps.Clear(capability.CAPS)
+	caps.Clear(capability.BOUNDS)
+	var cps []string
+	switch s.Profile {
+	case "default":
+		cps = DefaultCaps
+	case "sandbox":
+		cps = SandboxCaps
+	case "privileged":
+		cps = PrivilegedCaps
+	default:
+		cps = DefaultCaps
+	}
+	for _, cap := range cps {
+		if _, ok := CapabilityMap[cap]; !ok {
+			return fmt.Errorf("invalid capability: %s", cap)
 		}
-		for _, cap := range cps {
-			caps.Set(capability.PERMITTED, CapabilityMap[cap])
-			caps.Set(capability.EFFECTIVE, CapabilityMap[cap])
-		}
+		caps.Set(capability.BOUNDS, CapabilityMap[cap])
+		caps.Set(capability.PERMITTED, CapabilityMap[cap])
+		caps.Set(capability.EFFECTIVE, CapabilityMap[cap])
 	}
 
 	for _, cap := range s.CapAdd {
+		if _, ok := CapabilityMap[cap]; !ok {
+			return fmt.Errorf("invalid capability: %s", cap)
+		}
+		caps.Set(capability.BOUNDS, CapabilityMap[cap])
 		caps.Set(capability.PERMITTED, CapabilityMap[cap])
 		caps.Set(capability.EFFECTIVE, CapabilityMap[cap])
 	}
 	for _, cap := range s.CapDrop {
+		if _, ok := CapabilityMap[cap]; !ok {
+			return fmt.Errorf("invalid capability: %s", cap)
+		}
+		caps.Unset(capability.BOUNDS, CapabilityMap[cap])
 		caps.Unset(capability.PERMITTED, CapabilityMap[cap])
 		caps.Unset(capability.EFFECTIVE, CapabilityMap[cap])
 	}
-	caps.Apply(capability.CAPS)
+	return caps.Apply(capability.CAPS | capability.BOUNDS)
+
 }

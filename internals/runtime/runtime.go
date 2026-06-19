@@ -5,8 +5,8 @@ import (
 	"cage/internals/network"
 	"cage/internals/resources"
 	"cage/internals/security"
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +17,11 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
+
+type initPayload struct {
+	ContainerIP    string                   `json:"container_ip"`
+	SecurityConfig *security.SecurityConfig `json:"security_config"`
+}
 
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
 func StartContainer(containerID string, limits *resources.Limits, bridge *netlink.Bridge, portMap *network.PortMapping, securityConfig *security.SecurityConfig) {
@@ -45,6 +50,7 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 				syscall.CLONE_NEWNET,
 		),
 	}
+
 	r, w, _ := os.Pipe()
 
 	cmd.ExtraFiles = []*os.File{r}
@@ -64,12 +70,17 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	); err != nil {
 		panic(err)
 	}
-	securityConfig.SetUpCapabilities(pid)
+
 	hostnet := "veth-h" + strconv.Itoa(pid)
 	if err := network.SetUpContainerNetwork(pid, bridge, hostnet); err != nil {
 		panic(err)
 	}
-	if _, err := w.Write([]byte(containerIP)); err != nil {
+	// Send config (IP + security) to child via pipe as JSON
+	payload := initPayload{
+		ContainerIP:    containerIP,
+		SecurityConfig: securityConfig,
+	}
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		panic(err)
 	}
 
@@ -102,6 +113,7 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 }
 
 // InitContainer initializes the isolated environment inside namespaces.
+// It receives its configuration (IP, security) from the parent via a pipe.
 func InitContainer() {
 	lowerlayer := "/tmp/rootfs"
 	upperlayer := "/tmp/overlay/upper"
@@ -127,16 +139,27 @@ func InitContainer() {
 	if err := filesystem.PivotRoot(merged); err != nil {
 		panic(err)
 	}
+
+	// Read configuration from parent via pipe
 	syncFile := os.NewFile(uintptr(3), "sync")
 	defer syncFile.Close()
 
-	ipBytes, err := io.ReadAll(syncFile)
-	if err != nil {
+	var payload initPayload
+	if err := json.NewDecoder(syncFile).Decode(&payload); err != nil {
 		panic(err)
 	}
-	containerIP := string(ipBytes)
 
-	if err := network.SetUpVeth("eth0", containerIP); err != nil {
+	if err := network.SetUpVeth("eth0", payload.ContainerIP); err != nil {
+		panic(err)
+	}
+
+	// Set up capabilities inside the child process (pid=0 means current process)
+	if err := payload.SecurityConfig.SetUpCapabilities(); err != nil {
+		panic(err)
+	}
+
+	// Prevent the process from gaining new privileges after exec
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		panic(err)
 	}
 

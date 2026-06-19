@@ -17,6 +17,7 @@ func main() {
 		runtime.InitContainer()
 		return
 	}
+
 	cpu := flag.Int("cpu", 4, "maximum number of cpu cores")
 	memory := flag.Int64("mem", 536870912, "maximum amount of memory needed")
 	pids := flag.Int("pids", 100, "maximum number of pids")
@@ -42,6 +43,7 @@ func main() {
 	if *dropCap != "" {
 		securityConfig.CapDrop = append(securityConfig.CapDrop, strings.Split(*dropCap, ",")...)
 	}
+
 	var portMap *network.PortMapping
 	if *portMapStr != "" {
 		var hostPort, containerPort int

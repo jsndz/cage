@@ -69,3 +69,13 @@ task_struct
     ├── open files
     ├── credentials
     └── capabilities
+
+
+Remove all the caps from bounding  set
+Add the caps you want to permitted and effective set
+set PR_SET_NO_NEW_PRIVS so that it stops process from gaining privileges it didn't already have
+
+// Clear all capability sets: CAPS covers EFFECTIVE, PERMITTED, and INHERITABLE.
+	// Clearing INHERITABLE prevents capability leakage across exec() calls.
+	// AMBIENT caps require the cap to be in both PERMITTED and INHERITABLE,
+	// so leaving INHERITABLE empty guarantees AMBIENT is also empty.
