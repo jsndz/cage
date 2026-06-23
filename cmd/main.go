@@ -25,6 +25,7 @@ func main() {
 	profile := flag.String("profile", "", "linux capablities profile(e.g. default, restricted, privileged)")
 	addCap := flag.String("cap-add", "", "add linux capabilities(e.g. CAP_SYS_ADMIN,CAP_NET_ADMIN)")
 	dropCap := flag.String("cap-drop", "", "drop linux capabilites(e.g. )")
+	readonly := flag.Bool("read-only", false, "mount rootfs as read-only")
 	flag.Parse()
 
 	limits := &resources.Limits{
@@ -33,9 +34,10 @@ func main() {
 		PidsMax:   *pids,
 	}
 	securityConfig := &security.SecurityConfig{
-		Profile: *profile,
-		CapAdd:  []string{},
-		CapDrop: []string{},
+		Profile:  *profile,
+		Readonly: *readonly,
+		CapAdd:   []string{},
+		CapDrop:  []string{},
 	}
 	if *addCap != "" {
 		securityConfig.CapAdd = append(securityConfig.CapAdd, strings.Split(*addCap, ",")...)

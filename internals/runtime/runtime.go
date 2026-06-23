@@ -132,33 +132,35 @@ func InitContainer() {
 	upperlayer := "/tmp/overlay/upper"
 	workdir := "/tmp/overlay/work"
 	merged := "/tmp/overlay/merged"
-
-	if err := filesystem.MountOverlay(lowerlayer, upperlayer, workdir, merged); err != nil {
-		panic(err)
-	}
-
-	if err := unix.Sethostname([]byte("cage")); err != nil {
-		panic(err)
-	}
-
-	// Write default resolv.conf to configure DNS resolver (e.g., 8.8.8.8) inside the container
-	if err := os.MkdirAll(merged+"/etc", 0755); err != nil {
-		panic(err)
-	}
-	if err := os.WriteFile(merged+"/etc/resolv.conf", []byte("nameserver 8.8.8.8\n"), 0644); err != nil {
-		panic(err)
-	}
-
-	if err := filesystem.PivotRoot(merged); err != nil {
-		panic(err)
-	}
-
 	// Read configuration from parent via pipe
 	syncFile := os.NewFile(uintptr(3), "sync")
 	defer syncFile.Close()
 
 	var payload initPayload
 	if err := json.NewDecoder(syncFile).Decode(&payload); err != nil {
+		panic(err)
+	}
+	if payload.SecurityConfig.Readonly {
+		if err := payload.SecurityConfig.ReadOnly(lowerlayer, merged); err != nil {
+			panic(err)
+		}
+	} else {
+		if err := filesystem.MountOverlay(lowerlayer, upperlayer, workdir, merged); err != nil {
+			panic(err)
+		}
+		// Write default resolv.conf to configure DNS resolver (e.g., 8.8.8.8) inside the container
+		if err := os.MkdirAll(merged+"/etc", 0755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(merged+"/etc/resolv.conf", []byte("nameserver 8.8.8.8\n"), 0644); err != nil {
+			panic(err)
+		}
+		if err := filesystem.PivotRoot(merged); err != nil {
+			panic(err)
+		}
+	}
+
+	if err := unix.Sethostname([]byte("cage")); err != nil {
 		panic(err)
 	}
 

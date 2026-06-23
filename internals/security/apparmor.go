@@ -77,10 +77,10 @@ profile %s flags=(attach_disconnected,mediate_deleted) {
   deny pivot_root,
 
   # Block ptrace of other processes
-  deny ptrace (read, readby, trace, traceby),
+  deny ptrace,
 
   # Allow ptrace of self (needed for debugging tools inside container)
-  ptrace (read, trace) peer=%s,
+  ptrace peer=%s,
 }
 `
 

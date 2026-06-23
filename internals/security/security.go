@@ -1,10 +1,10 @@
 package security
 
 type SecurityConfig struct {
-	Profile string
-
-	CapAdd  []string
-	CapDrop []string
+	Profile  string
+	Readonly bool
+	CapAdd   []string
+	CapDrop  []string
 }
 
 var DefaultCaps = []string{
@@ -87,11 +87,12 @@ var PrivilegedCaps = []string{
 	"CAP_CHECKPOINT_RESTORE",
 }
 
-func NewSecurityConfig(profile string, capAdd []string, capDrop []string) *SecurityConfig {
+func NewSecurityConfig(profile string, capAdd []string, capDrop []string, readonly bool) *SecurityConfig {
 
 	return &SecurityConfig{
-		Profile: profile,
-		CapAdd:  capAdd,
-		CapDrop: capDrop,
+		Profile:  profile,
+		Readonly: readonly,
+		CapAdd:   capAdd,
+		CapDrop:  capDrop,
 	}
 }

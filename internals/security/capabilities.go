@@ -2,6 +2,7 @@ package security
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/syndtr/gocapability/capability"
 )
@@ -10,7 +11,7 @@ var CapabilityMap = make(map[string]capability.Cap)
 
 func init() {
 	for c := capability.Cap(0); c <= capability.CAP_CHECKPOINT_RESTORE; c++ {
-		CapabilityMap[c.String()] = c
+		CapabilityMap["CAP_"+strings.ToUpper(c.String())] = c
 	}
 }
 

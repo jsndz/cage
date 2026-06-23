@@ -1,16 +1,3 @@
-```sh
-
-mkdir -p /tmp/rootfs
-docker export $(docker create alpine:latest) \
-  | sudo tar -C /tmp/rootfs -xf -
-
-go build -o cage cmd/main.go
-sudo ./cage
-```
-
- Now I have the full picture. Here's my analysis:
-  ──────
-  Your instinct is right — a  --readonly  flag is the clean way to do this. Here's how it maps to your current architecture:
 
   ## How Readonly Rootfs Works
 
