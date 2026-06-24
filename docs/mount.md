@@ -152,7 +152,7 @@ Its not copying , The kernel is simply changing where path resolution goes.
 Like redirecting to the files
 
 This is put in mount table
-And when you do unmount the entry in table is removes
+And when you do unmount the entry in table is removed
 
 mount --bind uses same mechanism 
 
@@ -187,6 +187,38 @@ pop-os:~/mount-lab$ tree
 
 
 ```
+A normal mount attaches a filesystem to a directory.
+mount -t ext4 /dev/sda1 /mnt
+Disk partition (/dev/sda1)
+        ↓
+     ext4 driver
+        ↓
+       /mnt
+
+The kernel reads the filesystem metadata and exposes its contents at /mnt.
+
+Or:
+
+mount -t tmpfs tmpfs /tmp
+
+creates a brand-new in-memory filesystem.
+
+A bind mount attaches an existing path to another path.
+
+mount --bind /home/jaison/project /container/app
+/home/jaison/project
+           ↓
+     same files
+           ↓
+/container/app
+
+No new filesystem is mounted.
+
+No filesystem driver is involved.
+
+No disk is read.
+
+The kernel just creates another mount point referring to the same underlying files.
 
 Lets bind mount 
 

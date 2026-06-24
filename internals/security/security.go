@@ -3,6 +3,7 @@ package security
 type SecurityConfig struct {
 	Profile  string
 	Readonly bool
+	Rootless bool
 	CapAdd   []string
 	CapDrop  []string
 }

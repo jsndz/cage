@@ -47,6 +47,7 @@ func MountReadOnly(lower, merged string) error {
 	}
 
 	// Bind mount the lower dir
+	// mounting lower to merged
 	if err := unix.Mount(lower, merged, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		return err
 	}

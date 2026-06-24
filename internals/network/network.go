@@ -16,11 +16,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type PortMapping struct {
-	HostPort      int
-	ContainerPort int
-}
-
 func AssignIP(link netlink.Link, ip string) error {
 	addr, err := netlink.ParseAddr(ip)
 	if err != nil {

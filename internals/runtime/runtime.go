@@ -48,16 +48,44 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if securityConfig.Rootless {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Cloneflags: uintptr(
+				syscall.CLONE_NEWPID |
+					syscall.CLONE_NEWNS |
+					syscall.CLONE_NEWUTS |
+					syscall.CLONE_NEWNET |
+					syscall.CLONE_NEWUSER,
+			),
+			UidMappings: []syscall.SysProcIDMap{
+				{
+					ContainerID: 0,
+					HostID:      os.Getuid(),
+					Size:        1,
+				},
+			},
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: uintptr(
-			syscall.CLONE_NEWPID |
-				syscall.CLONE_NEWNS |
-				syscall.CLONE_NEWUTS |
-				syscall.CLONE_NEWNET,
-		),
+			GidMappings: []syscall.SysProcIDMap{
+				{
+					ContainerID: 0,
+					HostID:      os.Getgid(),
+					Size:        1,
+				},
+			},
+
+			GidMappingsEnableSetgroups: false,
+		}
+
+	} else {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Cloneflags: uintptr(
+				syscall.CLONE_NEWPID |
+					syscall.CLONE_NEWNS |
+					syscall.CLONE_NEWUTS |
+					syscall.CLONE_NEWNET,
+			),
+		}
 	}
-
 	r, w, _ := os.Pipe()
 
 	cmd.ExtraFiles = []*os.File{r}
@@ -94,7 +122,6 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 
 	sb.IpAddr = containerIP
 	sb.Status = "running"
-	fmt.Println(portMap)
 	if portMap != nil {
 		ip := containerIP
 		if idx := strings.Index(ip, "/"); idx != -1 {

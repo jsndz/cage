@@ -26,6 +26,7 @@ func main() {
 	addCap := flag.String("cap-add", "", "add linux capabilities(e.g. CAP_SYS_ADMIN,CAP_NET_ADMIN)")
 	dropCap := flag.String("cap-drop", "", "drop linux capabilites(e.g. )")
 	readonly := flag.Bool("read-only", false, "mount rootfs as read-only")
+	rootless := flag.Bool("rootless", false, "run container in rootless mode")
 	flag.Parse()
 
 	limits := &resources.Limits{
@@ -36,6 +37,7 @@ func main() {
 	securityConfig := &security.SecurityConfig{
 		Profile:  *profile,
 		Readonly: *readonly,
+		Rootless: *rootless,
 		CapAdd:   []string{},
 		CapDrop:  []string{},
 	}
