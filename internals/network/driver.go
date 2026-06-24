@@ -5,7 +5,7 @@ type PortMapping struct {
 	ContainerPort int
 }
 
-type Driver interface {
+type NetworkDriver interface {
 	ParentSetup(pid int, containerIP string, portMap *PortMapping) error
 	ChildSetup(containerIP string) error
 	TearDown(pid int) error

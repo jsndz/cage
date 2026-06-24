@@ -128,6 +128,25 @@ func PivotRoot(rootfs string) error {
 	return os.RemoveAll("/.oldroot")
 }
 
+// pivot root for rootless -> chroot + mounts
+func ChrootRoot(rootfs string) error {
+	//you make the rootfs a mount point by mounting it to itself
+	err := unix.Mount(rootfs, rootfs, "", unix.MS_BIND|unix.MS_REC, "")
+	if err != nil {
+		return err
+	}
+	err = unix.Chroot(rootfs)
+	if err != nil {
+		return err
+	}
+	err = unix.Chdir("/")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // SetupSystemMounts mounts proc, sysfs, and tmpfs inside the container's root.
 func SetupSystemMounts() error {
 	if err := os.MkdirAll("/proc", 0555); err != nil {
