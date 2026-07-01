@@ -71,7 +71,7 @@ func MountReadOnly(lower, merged string) error {
 	}
 
 	// Remount as read-only
-	return unix.Mount("", merged, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, "")
+	return nil
 }
 
 // CleanOverlay unmounts the merged directory and removes the overlay directories.

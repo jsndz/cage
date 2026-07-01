@@ -98,12 +98,14 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	sb.Status = "starting"
 	fmt.Print("Container PID: ", pid, "\n")
 
-	if err := os.WriteFile(
-		filepath.Join(cm.Path, "cgroup.procs"),
-		[]byte(strconv.Itoa(pid)),
-		0644,
-	); err != nil {
-		panic(err)
+	if cm.Path != "" {
+		if err := os.WriteFile(
+			filepath.Join(cm.Path, "cgroup.procs"),
+			[]byte(strconv.Itoa(pid)),
+			0644,
+		); err != nil {
+			panic(err)
+		}
 	}
 
 	hostnet := "veth-h" + strconv.Itoa(pid)
@@ -182,11 +184,16 @@ func InitContainer() {
 		if err := os.WriteFile(merged+"/etc/resolv.conf", []byte("nameserver 8.8.8.8\n"), 0644); err != nil {
 			panic(err)
 		}
-		if err := filesystem.PivotRoot(merged); err != nil {
+
+	}
+	if err := filesystem.PivotRoot(merged); err != nil {
+		panic(err)
+	}
+	if payload.SecurityConfig.Readonly {
+		if err := unix.Mount("", "/", "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
 			panic(err)
 		}
 	}
-
 	if err := unix.Sethostname([]byte("cage")); err != nil {
 		panic(err)
 	}
@@ -206,7 +213,7 @@ func InitContainer() {
 	}
 
 	// Apply AppArmor profile — transitions on next exec()
-	if err := security.ApplyApparmorProfile(payload.ApparmorProfile); err != nil {
+	if err := payload.SecurityConfig.ApplyApparmorProfile(payload.ApparmorProfile); err != nil {
 		panic(err)
 	}
 

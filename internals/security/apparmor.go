@@ -186,8 +186,8 @@ func (s *SecurityConfig) LoadApparmorProfile(containerID string) (string, error)
 // ApplyApparmorProfile transitions the current process to the given AppArmor
 // profile on the next exec() call. This must be called from the CHILD process
 // before exec().
-func ApplyApparmorProfile(profileName string) error {
-	if profileName == "" || profileName == "unconfined" {
+func (s *SecurityConfig) ApplyApparmorProfile(profileName string) error {
+	if profileName == "" || profileName == "unconfined" || s.Rootless {
 		// No profile to apply.
 		return nil
 	}
@@ -208,7 +208,7 @@ func ApplyApparmorProfile(profileName string) error {
 // UnloadApparmorProfile removes an AppArmor profile from the kernel.
 // Called during container cleanup.
 func (s *SecurityConfig) UnloadApparmorProfile(containerID string) error {
-	if s.Profile == "privileged" {
+	if s.Profile == "privileged" || s.Rootless {
 		return nil
 	}
 
