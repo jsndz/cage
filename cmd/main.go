@@ -60,11 +60,6 @@ func main() {
 			ContainerPort: containerPort,
 		}
 	}
-
-	bridge, err := network.GetorCreateBridge()
-	if err != nil {
-		panic(err)
-	}
 	id := utils.NewID()
-	runtime.StartContainer(id, limits, bridge, portMap, securityConfig)
+	runtime.StartContainer(id, limits, portMap, securityConfig)
 }

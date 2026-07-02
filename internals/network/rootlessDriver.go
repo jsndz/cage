@@ -43,7 +43,7 @@ func (sd *Slirp4netnsDriver) ChildSetup(containerIP string) error {
 	}
 	return nil
 }
-func (sd *Slirp4netnsDriver) Teardown(pid int) error {
+func (sd *Slirp4netnsDriver) TearDown(pid int) error {
 	if sd.cmd != nil && sd.cmd.Process != nil {
 		// Stop the daemon process cleanly
 		return sd.cmd.Process.Signal(syscall.SIGTERM)

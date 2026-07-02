@@ -11,10 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
-	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
@@ -24,8 +22,13 @@ type initPayload struct {
 	ApparmorProfile string                   `json:"apparmor_profile"`
 }
 
+const lowerlayer = "/tmp/rootfs"
+const upperlayer = "/tmp/overlay/upper"
+const workdir = "/tmp/overlay/work"
+const merged = "/tmp/overlay/merged"
+
 // StartContainer sets up cgroups, clones namespaces, setup network and runs the container.
-func StartContainer(containerID string, limits *resources.Limits, bridge *netlink.Bridge, portMap *network.PortMapping, securityConfig *security.SecurityConfig) {
+func StartContainer(containerID string, limits *resources.Limits, portMap *network.PortMapping, securityConfig *security.SecurityConfig) {
 	sb := CreateSandbox(containerID)
 	cm := resources.NewCgroupManager(containerID)
 	if err := cm.ApplyLimits(limits); err != nil {
@@ -36,7 +39,15 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 	if err != nil {
 		panic(err)
 	}
-
+	var networkDriver network.NetworkDriver
+	var storageDriver filesystem.StorageDriver
+	if securityConfig.Rootless {
+		networkDriver = &network.Slirp4netnsDriver{}
+		storageDriver = &filesystem.RootlessStorageDriver{}
+	} else {
+		networkDriver = &network.BridgedDriver{}
+		storageDriver = &filesystem.OverlayDriver{}
+	}
 	// Load AppArmor profile into the kernel (must happen in parent before child exec's)
 	apparmorProfile, err := securityConfig.LoadApparmorProfile(containerID)
 	if err != nil {
@@ -108,8 +119,7 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 		}
 	}
 
-	hostnet := "veth-h" + strconv.Itoa(pid)
-	if err := network.SetUpContainerNetwork(pid, bridge, hostnet); err != nil {
+	if err := networkDriver.ParentSetup(pid, containerIP, portMap); err != nil {
 		panic(err)
 	}
 	// Send config (IP + security) to child via pipe as JSON
@@ -124,30 +134,19 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 
 	sb.IpAddr = containerIP
 	sb.Status = "running"
-	if portMap != nil {
-		ip := containerIP
-		if idx := strings.Index(ip, "/"); idx != -1 {
-			ip = ip[:idx]
-		}
-		if err := network.AddPortForwarding(portMap.HostPort, ip, portMap.ContainerPort, bridge.Attrs().Name); err != nil {
-			panic(err)
-		}
-	}
 
 	w.Close()
 	cmd.Wait()
 
-	if err := filesystem.CleanOverlay("/tmp/overlay/merged", "/tmp/overlay"); err != nil {
-		panic(err)
-	}
-
 	if err := cm.Destroy(); err != nil {
 		panic(err)
 	}
-	if err := network.CleanBridge(hostnet); err != nil {
+	if err := networkDriver.TearDown(pid); err != nil {
 		panic(err)
 	}
-
+	if err := storageDriver.Clean(merged, filepath.Dir(merged)); err != nil {
+		panic(err)
+	}
 	// Unload AppArmor profile from the kernel
 	if err := securityConfig.UnloadApparmorProfile(containerID); err != nil {
 		panic(err)
@@ -157,10 +156,7 @@ func StartContainer(containerID string, limits *resources.Limits, bridge *netlin
 // InitContainer initializes the isolated environment inside namespaces.
 // It receives its configuration (IP, security) from the parent via a pipe.
 func InitContainer() {
-	lowerlayer := "/tmp/rootfs"
-	upperlayer := "/tmp/overlay/upper"
-	workdir := "/tmp/overlay/work"
-	merged := "/tmp/overlay/merged"
+
 	// Read configuration from parent via pipe
 	syncFile := os.NewFile(uintptr(3), "sync")
 	defer syncFile.Close()
@@ -169,25 +165,37 @@ func InitContainer() {
 	if err := json.NewDecoder(syncFile).Decode(&payload); err != nil {
 		panic(err)
 	}
-	if payload.SecurityConfig.Readonly {
-		if err := payload.SecurityConfig.ReadOnly(lowerlayer, merged); err != nil {
-			panic(err)
-		}
+	var networkDriver network.NetworkDriver
+	var storageDriver filesystem.StorageDriver
+	if payload.SecurityConfig.Rootless {
+		networkDriver = &network.Slirp4netnsDriver{}
+		storageDriver = &filesystem.RootlessStorageDriver{}
 	} else {
-		if err := filesystem.MountOverlay(lowerlayer, upperlayer, workdir, merged); err != nil {
-			panic(err)
-		}
-		// Write default resolv.conf to configure DNS resolver (e.g., 8.8.8.8) inside the container
+		networkDriver = &network.BridgedDriver{}
+		storageDriver = &filesystem.OverlayDriver{}
+	}
+	if err := storageDriver.Mount(lowerlayer, upperlayer, merged, workdir, payload.SecurityConfig.Readonly); err != nil {
+		panic(err)
+	}
+	if !payload.SecurityConfig.Readonly {
 		if err := os.MkdirAll(merged+"/etc", 0755); err != nil {
 			panic(err)
 		}
 		if err := os.WriteFile(merged+"/etc/resolv.conf", []byte("nameserver 8.8.8.8\n"), 0644); err != nil {
 			panic(err)
 		}
-
 	}
-	if err := filesystem.PivotRoot(merged); err != nil {
-		panic(err)
+	if payload.SecurityConfig.Rootless {
+		if err := filesystem.ChrootRoot(merged); err != nil {
+			panic(err)
+		}
+		if err := filesystem.SetupSystemMounts(); err != nil {
+			panic(err)
+		}
+	} else {
+		if err := filesystem.PivotRoot(merged); err != nil {
+			panic(err)
+		}
 	}
 	if payload.SecurityConfig.Readonly {
 		if err := unix.Mount("", "/", "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
@@ -198,7 +206,7 @@ func InitContainer() {
 		panic(err)
 	}
 
-	if err := network.SetUpVeth("eth0", payload.ContainerIP); err != nil {
+	if err := networkDriver.ChildSetup(payload.ContainerIP); err != nil {
 		panic(err)
 	}
 
